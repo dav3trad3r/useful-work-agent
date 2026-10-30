@@ -77,6 +77,10 @@ export function usefulWorkExtension(dir: DirectoryOptions): ResourceServerExtens
 
   return {
     key: EXTENSION_KEY,
+    // A paying agent echoes the 402's extensions back, and x402 checks the echo against a 402 built
+    // afresh for the paid request. The job, or why there is none, differs every time (a paid request
+    // is never offered work), so only the version is held to the echo; without this, nobody could pay.
+    dynamicInfoFields: ["available", "reason", "job", "answer", "buys", "lastResult"],
 
     enrichPaymentRequiredResponse: async (_declaration, context): Promise<WorkExtension> => {
       const request = (context.transportContext as { request?: RequestLike } | undefined)?.request;

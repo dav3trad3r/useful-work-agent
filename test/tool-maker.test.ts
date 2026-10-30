@@ -1,3 +1,5 @@
+import { x402ResourceServer } from "@x402/core/server";
+import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 import { usefulWorkExtension, workResultHeader } from "../src/extension.js";
@@ -83,6 +85,26 @@ describe("the x402 extension", () => {
     const req = request({ [AGENT_HEADER]: "agent-12345678", [WORK_HEADER]: answer(other) });
     expect(await submit(ext, req)).toBeUndefined();
     expect(await enrich(ext, req)).toMatchObject({ job: { id: JOB }, lastResult: { status: "rejected", reason: "missed 1 of 1 known errors" } });
+  });
+
+  it("lets an agent pay cash: the 402's extensions, echoed back, pass x402's check", async () => {
+    const dir = directory(() => job);
+    const ext = usefulWorkExtension({ apiKey: "k", fetch: dir.fetch });
+    const accepts: PaymentRequirements[] = [{ scheme: "exact", network: "eip155:8453", amount: "2000", asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", payTo: PROVIDER, maxTimeoutSeconds: 60, extra: {} }];
+    const declared = { "useful-work": { version: 1 } };
+    const agent = { [AGENT_HEADER]: "agent-12345678" };
+    // The first 402 offers a job; the paid retry is rebuilt with "payment in progress" instead.
+    const check = async (extension: Ext) => {
+      const server = new x402ResourceServer([]).registerExtension(extension);
+      const first = await server.createPaymentRequiredResponse(accepts, { url: "https://tools.example/tools/x" }, "Payment required", declared, { request: request(agent) });
+      const paid = await server.createPaymentRequiredResponse(accepts, { url: "https://tools.example/tools/x" }, "Payment required", declared, { request: request(agent, "signed-payment") });
+      expect(first.extensions?.["useful-work"]).toMatchObject({ job: { id: JOB } });
+      expect(paid.extensions?.["useful-work"]).toMatchObject({ reason: "payment in progress" });
+      return server.validateExtensions(paid, { x402Version: 2, accepted: accepts[0]!, payload: {}, extensions: first.extensions } as PaymentPayload);
+    };
+    expect(await check(ext)).toEqual({ valid: true });
+    // Without the dynamic fields, the same echo is refused: the bug this guards against.
+    expect(await check({ ...ext, dynamicInfoFields: undefined })).toMatchObject({ valid: false, invalidReason: "extension_echo_mismatch" });
   });
 
   it("ignores answers that aren't well formed", async () => {
